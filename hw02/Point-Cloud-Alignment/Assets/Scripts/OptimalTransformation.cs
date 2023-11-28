@@ -1,11 +1,22 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Accord.Math;
+using UnityEngine.UI;
+using TMPro;
+
 // using Accord.Math.Decompositions;
 // using Accord.Imaging;
 
 public class OptimalTransformation : MonoBehaviour
 {
+    [SerializeField] private Material materialTransformedPoints;
+    [SerializeField] private TMP_Text toggleVisualizationButtonText; 
+    [SerializeField] private TMP_Text toggleScaleButtonText; 
+
+    [SerializeField] private TMP_Text toggleRunButtonText; 
+    [SerializeField] private TMP_Text transformationText;
+    // [SerializeField] private TMP_Text scaleText;
+
     // Public variables accessible in the Unity Inspector
     public GameObject pointCloud_1;
     public GameObject pointCloud_2;
@@ -14,6 +25,9 @@ public class OptimalTransformation : MonoBehaviour
     public bool drawTransformLine = true;
     public int iteration = 10000;
     public bool run = false;
+
+    public bool viewLines; // Visualization option
+    public bool enableScale; // Registeration option
 
     // Private variables to track alignment status and point lists
     private bool isAligned = false;
@@ -32,8 +46,59 @@ public class OptimalTransformation : MonoBehaviour
         // Perform alignment if conditions are met
         if (!isAligned && run)
         {
+            // TODO: two registering option
+            // TODO: two display option
             AlignPointClouds();
+            // DisplayScaleText(scale);
         }
+    }
+
+    void DisplayTransformationText(Accord.Math.Vector3 translation, Accord.Math.Matrix3x3 rotation, Accord.Math.Matrix3x3 scale)
+    {
+        string text = $"Translation: {Vector3ToString(translation)}\n" +
+                    $"Rotation:\n{Matrix3x3ToString(rotation)}\n" +
+                    $"Scale:\n{Matrix3x3ToString(scale)}";
+
+        // check if scaling is used
+
+        transformationText.text = text;
+    }
+
+    // Function to convert a Vector3 to string
+    string Vector3ToString(Accord.Math.Vector3 vector)
+    {
+        return $"({vector.X:F2}, {vector.Y:F2}, {vector.Z:F2})";
+    }
+
+    // Function to convert a Matrix3x3 to string
+    string Matrix3x3ToString(Matrix3x3 matrix)
+    {
+        return $"{matrix.V00:F2}, {matrix.V01:F2}, {matrix.V02:F2}\n" +
+            $"{matrix.V10:F2}, {matrix.V11:F2}, {matrix.V12:F2}\n" +
+            $"{matrix.V20:F2}, {matrix.V21:F2}, {matrix.V22:F2}";
+    }
+
+    public void ToggleRun()
+    {
+        run = !run;
+        toggleRunButtonText.text = run ? "Reset" : "Run";
+    }
+
+    // Method to toggle the visualization
+    public void ToggleVisualization()
+    {
+        viewLines = !viewLines;
+        // Change the button text based on the boolean value
+        // toggleVisualizationButtonText.text = viewLines ? "Remove Line" : "View Line";
+        toggleVisualizationButtonText.color = viewLines ? Color.green : Color.red;
+    }
+
+    // Method to toggle the algorithm
+    public void ToggleTransformationAlgorithm()
+    {
+        enableScale = !enableScale;
+        // Change the button text based on the boolean value
+        toggleScaleButtonText.color = enableScale ? Color.green : Color.red;
     }
 
     // Extracts points from a given point cloud GameObject
@@ -54,36 +119,56 @@ public class OptimalTransformation : MonoBehaviour
     // Aligns the point clouds using ICP and RANSAC algorithms
     void AlignPointClouds()
     {
+        List<Accord.Math.Vector3> points_2_tranformed;
         // Get the best transformation parameters
         Accord.Math.Vector3 translation;
-        Matrix3x3 rotation;
-        float scale;
-        GetBestTransformation(points_1, points_2, out translation, out rotation, out scale);
+        Accord.Math.Matrix3x3 rotation;
+        Accord.Math.Matrix3x3 scale;
 
-        // Apply transformation to pointCloud_2
-        for (int i = 0; i < pointCloud_2.transform.childCount; i++)
-        {
-            UnityEngine.Vector3 position = pointCloud_2.transform.GetChild(i).position;
-            Accord.Math.Vector3 point = new Accord.Math.Vector3(position.x, position.y, position.z);
-            point = rotation * point;
-            // SCALE SHOLD BE AFTER rotation
-            point += translation;
+        GetBestTransformation(points_1, points_2, out translation, out rotation, out scale, out points_2_tranformed);
 
-            if (drawTransformLine)
-            {
-                // Visualize transformation lines
-                VisualizeTransformationLine(pointCloud_2.transform.GetChild(i), point);
-            }
+        // 2 different visualization
 
-            if (transformPointCloud)
-            {
-                // Apply transformation to the point cloud
-                pointCloud_2.transform.GetChild(i).position = new UnityEngine.Vector3(point.X, point.Y, point.Z);
-            }
-        }
 
-        isAligned = true;
+        if (viewLines) // Show the transformed points (second sets) with its movement as a line.
+            CreateTransformationLines(points_2_tranformed);
+        else // Show the original and aligned points (with three different colors)       
+            CreateTransformedPoints(points_2_tranformed);
+
+        DisplayTransformationText(translation, rotation, scale);
+
+        isAligned = true; // is this necessary
         Debug.Log("Alignment completed.");
+    }
+
+    void CreateTransformedPoints(List<Accord.Math.Vector3> transformedPoints)
+    {
+        for (int i = 0; i < transformedPoints.Count; ++i) {
+            GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            sphere.transform.position = new UnityEngine.Vector3(transformedPoints[i].X, transformedPoints[i].Y, transformedPoints[i].Z);
+            sphere.GetComponent<Renderer>().material = materialTransformedPoints;
+            sphere.name = $"P {i}"; 
+            sphere.transform.parent = transform;
+        }
+    }
+
+    void CreateTransformationLines(List<Accord.Math.Vector3> transformedPoints)
+    {
+        for (int i = 0; i < pointCloud_2.transform.childCount; ++i)
+            VisualizeTransformationLine(pointCloud_2.transform.GetChild(i), transformedPoints[i]);
+    }
+
+    // Visualize transformation lines between original and transformed points
+    void VisualizeTransformationLine(Transform originalPoint, Accord.Math.Vector3 transformedPoint)
+    {
+        LineRenderer lineRenderer = originalPoint.gameObject.AddComponent<LineRenderer>();
+        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+        lineRenderer.startColor = Color.red;
+        lineRenderer.endColor = Color.green;
+        lineRenderer.startWidth = 0.2f;
+        lineRenderer.endWidth = 0.2f;
+        lineRenderer.SetPosition(0, originalPoint.position);
+        lineRenderer.SetPosition(1, new UnityEngine.Vector3(transformedPoint.X, transformedPoint.Y, transformedPoint.Z));
     }
 
     Accord.Math.Vector3 Unity2AccordVector(UnityEngine.Vector3 vector)
@@ -92,14 +177,18 @@ public class OptimalTransformation : MonoBehaviour
     }
 
     // Calculate the best transformation between two point clouds
-    void GetBestTransformation(List<Accord.Math.Vector3> points_1, List<Accord.Math.Vector3> points_2, out Accord.Math.Vector3 T, out Accord.Math.Matrix3x3 R, out float S){
+    void GetBestTransformation(List<Accord.Math.Vector3> points_1, List<Accord.Math.Vector3> points_2, out Accord.Math.Vector3 T, out Accord.Math.Matrix3x3 R, out Accord.Math.Matrix3x3 S, out List<Accord.Math.Vector3> points_2_transformed){
         
         int numBestInliers = 0;
+        points_2_transformed = new List<Accord.Math.Vector3>();
+
+        for (int i = 0; i < points_2.Count; ++i)
+            points_2_transformed.Add(new Accord.Math.Vector3());
 
         // Initialize tranformation matrices with default values
         T = new Accord.Math.Vector3(0f, 0f, 0f);
         R = ConstructAccordMatrix3x3(1); // Create identity matrix
-        S =  1f;
+        S = ConstructAccordMatrix3x3(1);
 
         // TODO: create RANSAC function and apply this procedure inside
         for (int i = 0; i < iteration && (numBestInliers < points_1.Count / 2); ++i) {
@@ -110,22 +199,16 @@ public class OptimalTransformation : MonoBehaviour
 
             Accord.Math.Vector3 translation;
             Accord.Math.Matrix3x3 rotation;
-            float scale;
+            Accord.Math.Matrix3x3 scale;
 
             GetTransformation(selectedPoints_1, selectedPoints_2, 
                 out translation, out rotation, out scale);
 
-            // THIS SHOULD BE Sx Sy Sz (IMPLEMENT LATER)
-            Accord.Math.Matrix3x3 scaleMatrix = ConstructAccordMatrix3x3(scale);
-
             // Apply transformation
-            List<Accord.Math.Vector3> points_2_temp = new List<Accord.Math.Vector3>();
-            foreach (Accord.Math.Vector3 point in points_2) {
-                Accord.Math.Vector3 point_temp = rotation * point + translation;
-                points_2_temp.Add(point_temp);
-            }
+            for (int j = 0; j < points_2.Count; ++j)
+                points_2_transformed[j] = rotation * points_2[j] + translation;
 
-            int numInliers = CountOverlappingPoints(points_1, points_2_temp, threshold);
+            int numInliers = CountOverlappingPoints(points_1, points_2_transformed, threshold);
 
             // Update the best transformation
             if (numInliers > numBestInliers) {
@@ -133,15 +216,15 @@ public class OptimalTransformation : MonoBehaviour
                 T = translation;
                 R = rotation;
                 S = scale;
-                Debug.Log("Number of inliers: " + numBestInliers);
+                Debug.Log($"Number of inliers: {numBestInliers}");
             }
         }
-        Debug.Log("Best inliers: " + numBestInliers);
+        Debug.Log($"Best inliers: {numBestInliers}");
     }
 
     Accord.Math.Matrix3x3 ConstructAccordMatrix3x3(params float[] values)
     {
-        Matrix3x3 matrix = new Matrix3x3();
+        Accord.Math.Matrix3x3 matrix = new Accord.Math.Matrix3x3();
 
         if (values.Length == 1)
         {
@@ -215,20 +298,7 @@ public class OptimalTransformation : MonoBehaviour
         return randomPoints;
     }
 
-    // Visualize transformation lines between original and transformed points
-    void VisualizeTransformationLine(Transform originalPoint, Accord.Math.Vector3 transformedPoint)
-    {
-        LineRenderer lineRenderer = originalPoint.gameObject.AddComponent<LineRenderer>();
-        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-        lineRenderer.startColor = Color.red;
-        lineRenderer.endColor = Color.green;
-        lineRenderer.startWidth = 0.2f;
-        lineRenderer.endWidth = 0.2f;
-        lineRenderer.SetPosition(0, originalPoint.position);
-        lineRenderer.SetPosition(1, new UnityEngine.Vector3(transformedPoint.X, transformedPoint.Y, transformedPoint.Z));
-    }
-
-    void GetTransformation(List<Accord.Math.Vector3> points3_1, List<Accord.Math.Vector3> points3_2, out Accord.Math.Vector3 translation, out Accord.Math.Matrix3x3 rotation, out float scale)
+    void GetTransformation(List<Accord.Math.Vector3> points3_1, List<Accord.Math.Vector3> points3_2, out Accord.Math.Vector3 translation, out Accord.Math.Matrix3x3 rotation, out Accord.Math.Matrix3x3 scale)
     {
         Accord.Math.Vector3 centroid_1 = GetCentroid(points3_1);
         Accord.Math.Vector3 centroid_2 = GetCentroid(points3_2);
@@ -242,7 +312,7 @@ public class OptimalTransformation : MonoBehaviour
 
         Accord.Math.Matrix3x3 R = V * U.Transpose();
 
-        if (R.Determinant < 0){
+        if (R.Determinant < 0) {
             R.SVD(out Accord.Math.Matrix3x3 U_temp, out Accord.Math.Vector3 S_temp, out Accord.Math.Matrix3x3 V_temp);
             V_temp.V20 = -V_temp.V00;
             V_temp.V21 = -V_temp.V01;
@@ -250,10 +320,9 @@ public class OptimalTransformation : MonoBehaviour
             R = V_temp * U_temp.Transpose();
         }
 
-        float scale_temp = (S.X + S.Y + S.Z) / 3f;
         translation = centroid_2 - R * centroid_1;
         rotation = R;
-        scale = scale_temp;
+        scale = ConstructAccordMatrix3x3(1); // TODO implement scaling properly
     }
 
     Accord.Math.Matrix3x3 Normalize3PointMatrix(List<Accord.Math.Vector3> points, Accord.Math.Vector3 centroid)
