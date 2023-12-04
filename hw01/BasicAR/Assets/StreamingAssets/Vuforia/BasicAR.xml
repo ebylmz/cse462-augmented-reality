@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QCARConfig>
+  <Tracking>
+    <ImageTarget name="drone" size="25.000000 42.992424" />
+    <ImageTarget name="astronaut" size="25.000000 43.365383" />
+    <ImageTarget name="fissure" size="25.000000 43.225189" />
+    <ImageTarget name="oxgen" size="25.000000 43.629345" />
+  </Tracking>
+</QCARConfig>
