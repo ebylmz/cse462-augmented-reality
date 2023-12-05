@@ -1,113 +1,58 @@
 using System.Collections.Generic;
+using System;
 using UnityEngine;
 using Accord.Math;
-using UnityEngine.UI;
-using TMPro;
-
-// using Accord.Math.Decompositions;
-// using Accord.Imaging;
+using Accord.Math.Optimization;
+using Accord.Statistics.Models.Regression.Fitting;
 
 public class OptimalTransformation : MonoBehaviour
 {
     [SerializeField] private Material materialTransformedPoints;
-    [SerializeField] private TMP_Text toggleVisualizationButtonText; 
-    [SerializeField] private TMP_Text toggleScaleButtonText; 
+    [SerializeField] private GameObject pcloud1;
+    [SerializeField] private GameObject pcloud2;
 
-    [SerializeField] private TMP_Text toggleRunButtonText; 
-    [SerializeField] private TMP_Text transformationText;
-    // [SerializeField] private TMP_Text scaleText;
+    [SerializeField] private float alignmentThreshold = 1f; 
+    [SerializeField] private int maxIterationNormal = 10000;
+    [SerializeField] private int maxIterationScaled = 1000;
 
-    // Public variables accessible in the Unity Inspector
-    public GameObject pointCloud_1;
-    public GameObject pointCloud_2;
-    public float threshold = 0.3f; // make it constant
-    public bool transformPointCloud = true;
-    public bool drawTransformLine = true;
-    public int iteration = 10000;
-    public bool run = false;
+    public bool displayTransformationLines = false;     // Visualization option
+    public bool enableScale = false;                    // Registeration option
 
-    public bool viewLines; // Visualization option
-    public bool enableScale; // Registeration option
+    private List<GameObject> transformedPoints = new List<GameObject>();
+    private List<LineRenderer> transformationLines = new List<LineRenderer>();
 
-    // Private variables to track alignment status and point lists
-    private bool isAligned = false;
-    private List<Accord.Math.Vector3> points_1;
-    private List<Accord.Math.Vector3> points_2;
+    private List<Accord.Math.Vector3> points1;
+    private List<Accord.Math.Vector3> points2;
 
     void Start()
     {
         // Initialize lists to store points
-        points_1 = ExtractPoints(pointCloud_1);
-        points_2 = ExtractPoints(pointCloud_2);
+        points1 = ExtractPoints(pcloud1);
+        points2 = ExtractPoints(pcloud2);
     }
 
-    void Update()
+    public void AlignPointClouds(out Accord.Math.Vector3 translation, out Accord.Math.Matrix3x3 rotation, out Accord.Math.Matrix3x3 scale)
     {
-        // Perform alignment if conditions are met
-        if (!isAligned && run)
-        {
-            // TODO: two registering option
-            // TODO: two display option
-            AlignPointClouds();
-            // DisplayScaleText(scale);
-        }
-    }
+        // Clear previos aligment outputs (if any)
+        Clear();
 
-    void DisplayTransformationText(Accord.Math.Vector3 translation, Accord.Math.Matrix3x3 rotation, Accord.Math.Matrix3x3 scale)
-    {
-        string text = $"Translation: {Vector3ToString(translation)}\n" +
-                    $"Rotation:\n{Matrix3x3ToString(rotation)}\n" +
-                    $"Scale:\n{Matrix3x3ToString(scale)}";
+        // Leverage RANSAC algorithm to find/estimate the transformation parameters
+        int numInliners = GetTransformationRANSAC(points1, points2, out translation, out rotation, out scale);
 
-        // check if scaling is used
+        // TODO: Check the number of inliers
+        CreateTransformedPoints(translation, rotation, scale);
+        if (displayTransformationLines)
+            CreateTransformationLines();
 
-        transformationText.text = text;
-    }
-
-    // Function to convert a Vector3 to string
-    string Vector3ToString(Accord.Math.Vector3 vector)
-    {
-        return $"({vector.X:F2}, {vector.Y:F2}, {vector.Z:F2})";
-    }
-
-    // Function to convert a Matrix3x3 to string
-    string Matrix3x3ToString(Matrix3x3 matrix)
-    {
-        return $"{matrix.V00:F2}, {matrix.V01:F2}, {matrix.V02:F2}\n" +
-            $"{matrix.V10:F2}, {matrix.V11:F2}, {matrix.V12:F2}\n" +
-            $"{matrix.V20:F2}, {matrix.V21:F2}, {matrix.V22:F2}";
-    }
-
-    public void ToggleRun()
-    {
-        run = !run;
-        toggleRunButtonText.text = run ? "Reset" : "Run";
-    }
-
-    // Method to toggle the visualization
-    public void ToggleVisualization()
-    {
-        viewLines = !viewLines;
-        // Change the button text based on the boolean value
-        // toggleVisualizationButtonText.text = viewLines ? "Remove Line" : "View Line";
-        toggleVisualizationButtonText.color = viewLines ? Color.green : Color.red;
-    }
-
-    // Method to toggle the algorithm
-    public void ToggleTransformationAlgorithm()
-    {
-        enableScale = !enableScale;
-        // Change the button text based on the boolean value
-        toggleScaleButtonText.color = enableScale ? Color.green : Color.red;
+        Debug.Log("Alignment completed.");
     }
 
     // Extracts points from a given point cloud GameObject
-    List<Accord.Math.Vector3> ExtractPoints(GameObject pointCloud)
+    private List<Accord.Math.Vector3> ExtractPoints(GameObject pointCloud)
     {
         List<Accord.Math.Vector3> extractedPoints = new List<Accord.Math.Vector3>();
 
-        for (int i = 0; i < pointCloud.transform.childCount; i++)
-        {
+        for (int i = 0; i < pointCloud.transform.childCount; ++i) {
             UnityEngine.Vector3 position = pointCloud.transform.GetChild(i).position;
             Accord.Math.Vector3 point = new Accord.Math.Vector3(position.x, position.y, position.z);
             extractedPoints.Add(point);
@@ -116,216 +61,342 @@ public class OptimalTransformation : MonoBehaviour
         return extractedPoints;
     }
 
-    // Aligns the point clouds using ICP and RANSAC algorithms
-    void AlignPointClouds()
+    public void Clear()
     {
-        List<Accord.Math.Vector3> points_2_tranformed;
-        // Get the best transformation parameters
-        Accord.Math.Vector3 translation;
-        Accord.Math.Matrix3x3 rotation;
-        Accord.Math.Matrix3x3 scale;
-
-        GetBestTransformation(points_1, points_2, out translation, out rotation, out scale, out points_2_tranformed);
-
-        // 2 different visualization
-
-
-        if (viewLines) // Show the transformed points (second sets) with its movement as a line.
-            CreateTransformationLines(points_2_tranformed);
-        else // Show the original and aligned points (with three different colors)       
-            CreateTransformedPoints(points_2_tranformed);
-
-        DisplayTransformationText(translation, rotation, scale);
-
-        isAligned = true; // is this necessary
-        Debug.Log("Alignment completed.");
+        ClearTransformedPoints();
+        ClearTransformationLines();
+        pcloud2.SetActive(true);
     }
 
-    void CreateTransformedPoints(List<Accord.Math.Vector3> transformedPoints)
+    private void CreateTransformedPoints(Accord.Math.Vector3 T, Accord.Math.Matrix3x3 R, Accord.Math.Matrix3x3 S)
     {
-        for (int i = 0; i < transformedPoints.Count; ++i) {
+        for (int i = 0; i < points1.Count; ++i) {
+            Accord.Math.Vector3 q = ApplyTransformation(points1[i], R, S, T);
             GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            sphere.transform.position = new UnityEngine.Vector3(transformedPoints[i].X, transformedPoints[i].Y, transformedPoints[i].Z);
+            sphere.transform.position = new UnityEngine.Vector3(q.X, q.Y, q.Z);
             sphere.GetComponent<Renderer>().material = materialTransformedPoints;
-            sphere.name = $"P {i}"; 
+            sphere.name = $"P{i:D3}"; 
             sphere.transform.parent = transform;
+            transformedPoints.Add(sphere);
         }
     }
 
-    void CreateTransformationLines(List<Accord.Math.Vector3> transformedPoints)
+    private Accord.Math.Vector3 ApplyTransformation(Accord.Math.Vector3 P, Accord.Math.Matrix3x3 R, Accord.Math.Matrix3x3 S, Accord.Math.Vector3 T)
     {
-        for (int i = 0; i < pointCloud_2.transform.childCount; ++i)
-            VisualizeTransformationLine(pointCloud_2.transform.GetChild(i), transformedPoints[i]);
+        return enableScale ? (S * R * P + T) : (R * P + T);
     }
 
-    // Visualize transformation lines between original and transformed points
-    void VisualizeTransformationLine(Transform originalPoint, Accord.Math.Vector3 transformedPoint)
+    private void ClearTransformedPoints()
     {
-        LineRenderer lineRenderer = originalPoint.gameObject.AddComponent<LineRenderer>();
-        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-        lineRenderer.startColor = Color.red;
-        lineRenderer.endColor = Color.green;
-        lineRenderer.startWidth = 0.2f;
-        lineRenderer.endWidth = 0.2f;
-        lineRenderer.SetPosition(0, originalPoint.position);
-        lineRenderer.SetPosition(1, new UnityEngine.Vector3(transformedPoint.X, transformedPoint.Y, transformedPoint.Z));
+        foreach (GameObject point in transformedPoints)
+            Destroy(point);
+        transformedPoints.Clear();
     }
 
-    Accord.Math.Vector3 Unity2AccordVector(UnityEngine.Vector3 vector)
+    public void DisplayTransformationLines(bool display)
     {
-        return new Accord.Math.Vector3(vector.x, vector.y, vector.z); 
+        if (display) {
+            if (!displayTransformationLines) {
+                CreateTransformationLines();
+                pcloud2.SetActive(false);
+            }
+        }
+        else {
+            pcloud2.SetActive(true);
+            ClearTransformationLines();
+        }
+        displayTransformationLines = display;
+    }
+
+    private void CreateTransformationLines()
+    {
+        LineRenderer lineRenderer;
+        
+        for (int i = 0; i < transformedPoints.Count; ++i) {
+            Transform p = pcloud1.transform.GetChild(i);
+            UnityEngine.Vector3 q = transformedPoints[i].transform.position;
+
+            // Check if the GameObject already has a LineRenderer component
+            lineRenderer = p.gameObject.GetComponent<LineRenderer>();
+
+            // If there's no LineRenderer component, add a new one
+            if (lineRenderer == null) {
+                lineRenderer = p.gameObject.AddComponent<LineRenderer>();
+                lineRenderer.startColor = Color.blue;
+                lineRenderer.endColor = Color.red;
+                lineRenderer.startWidth = 0.2f;
+                lineRenderer.endWidth = 0.2f;
+            }
+
+            lineRenderer.SetPosition(0, p.position);
+            lineRenderer.SetPosition(1, q);
+
+            transformationLines.Add(lineRenderer);
+        } 
+    }
+
+    // Function to hide or remove transformation lines based on the view option status
+    private void ClearTransformationLines()
+    {
+        foreach (LineRenderer lineRenderer in transformationLines)
+            Destroy(lineRenderer);
+        transformationLines.Clear();
     }
 
     // Calculate the best transformation between two point clouds
-    void GetBestTransformation(List<Accord.Math.Vector3> points_1, List<Accord.Math.Vector3> points_2, out Accord.Math.Vector3 T, out Accord.Math.Matrix3x3 R, out Accord.Math.Matrix3x3 S, out List<Accord.Math.Vector3> points_2_transformed){
-        
-        int numBestInliers = 0;
-        points_2_transformed = new List<Accord.Math.Vector3>();
+    private int GetTransformationRANSAC(List<Accord.Math.Vector3> points1, List<Accord.Math.Vector3> points2, out Accord.Math.Vector3 T, out Accord.Math.Matrix3x3 R, out Accord.Math.Matrix3x3 S) 
+    {
+        List<Accord.Math.Vector3> points1Transformed = new List<Accord.Math.Vector3>();
 
-        for (int i = 0; i < points_2.Count; ++i)
-            points_2_transformed.Add(new Accord.Math.Vector3());
+        for (int i = 0; i < points2.Count; ++i)
+            points1Transformed.Add(new Accord.Math.Vector3());
 
-        // Initialize tranformation matrices with default values
+        // Initialize tranformation matrices with default values (R and S are initially identity matrices)
         T = new Accord.Math.Vector3(0f, 0f, 0f);
-        R = ConstructAccordMatrix3x3(1); // Create identity matrix
-        S = ConstructAccordMatrix3x3(1);
+        R = Utility.ConstructAccordMatrix3x3(1); 
+        S = Utility.ConstructAccordMatrix3x3(1);
 
-        // TODO: create RANSAC function and apply this procedure inside
-        for (int i = 0; i < iteration && (numBestInliers < points_1.Count / 2); ++i) {
-            Debug.Log($"Iteration {i + 1}");
+        int numBestInliers = 0;
+        double minError= Double.MaxValue;
+        int maxIteration = enableScale ? maxIterationScaled : maxIterationNormal;
 
-            List<Accord.Math.Vector3> selectedPoints_1 = GetRandomPointsFromPointCloud(points_1, 3);
-            List<Accord.Math.Vector3> selectedPoints_2 = GetRandomPointsFromPointCloud(points_2, 3);
+        Accord.Math.Vector3 translation; 
+        Accord.Math.Matrix3x3 rotation;
+        Accord.Math.Matrix3x3 scale = Utility.ConstructAccordMatrix3x3(1);
 
-            Accord.Math.Vector3 translation;
-            Accord.Math.Matrix3x3 rotation;
-            Accord.Math.Matrix3x3 scale;
+        int iteration;
+        for (iteration = 0; iteration < maxIteration; ++iteration) {
+            // Random sampling
+            List<Accord.Math.Vector3> sample1 = GetRandomPointsFromPointCloud(points1, 3);
+            List<Accord.Math.Vector3> sample2 = GetRandomPointsFromPointCloud(points2, 3);
 
-            GetTransformation(selectedPoints_1, selectedPoints_2, 
-                out translation, out rotation, out scale);
+            if (enableScale) {
+                scale = GetScaleNumerically(sample1, sample2);
 
-            // Apply transformation
-            for (int j = 0; j < points_2.Count; ++j)
-                points_2_transformed[j] = rotation * points_2[j] + translation;
+                if (Matrix.IsSingular(MatrixToArray(scale)))
+                    continue;
 
-            int numInliers = CountOverlappingPoints(points_1, points_2_transformed, threshold);
+                Accord.Math.Matrix3x3 inverseScale = scale.Inverse();
+
+                // Apply the inverse scaling
+                for (int j = 0; j < sample2.Count; ++j)
+                    sample2[j] =  inverseScale * sample2[j];
+            }
+            
+            GetTransformation(sample1, sample2, out translation, out rotation);
+
+            if (enableScale) {
+                translation = scale * translation;
+            }
+
+            // Apply transformation and count the overlapping points
+            for (int j = 0; j < points1.Count; ++j)
+                points1Transformed[j] = ApplyTransformation(points1[j], rotation, scale, translation);
+
+            double error;
+            int numInliers = CountOverlappingPoints(points1Transformed, points2, out error);
 
             // Update the best transformation
-            if (numInliers > numBestInliers) {
+            if (numInliers > numBestInliers || error < minError) {
                 numBestInliers = numInliers;
+                minError = error;
                 T = translation;
                 R = rotation;
                 S = scale;
-                Debug.Log($"Number of inliers: {numBestInliers}");
+                // Stop RANSAC
+                if (numBestInliers >= points1.Count / 2)
+                    break;
             }
         }
-        Debug.Log($"Best inliers: {numBestInliers}");
+        Debug.Log($"Best inliers: {numBestInliers}, Total Iterations: {iteration}, Error: {minError:F2}");
+
+        return numBestInliers;
     }
 
-    Accord.Math.Matrix3x3 ConstructAccordMatrix3x3(params float[] values)
+    private double[,] MatrixToArray(Accord.Math.Matrix3x3 m)
     {
-        Accord.Math.Matrix3x3 matrix = new Accord.Math.Matrix3x3();
+        double[,] arr = new double[3, 3];
 
-        if (values.Length == 1)
-        {
-            float v = values[0];
-            matrix.V00 = v;
-            matrix.V01 = 0;
-            matrix.V02 = 0;
+        arr[0, 0] = m.V00;
+        arr[0, 1] = m.V01;
+        arr[0, 2] = m.V02;
 
-            matrix.V10 = 0;
-            matrix.V11 = v;
-            matrix.V12 = 0;
+        arr[1, 0] = m.V10;
+        arr[1, 1] = m.V11;
+        arr[1, 2] = m.V12;
 
-            matrix.V20 = 0;
-            matrix.V21 = 0;
-            matrix.V22 = v;
-        }
-        else if (values.Length != 9)
-        {
-            Debug.Log("Error. The input list must contain exactly 9 elements for a 3x3 matrix.");
-        }
-        else {
-            matrix.V00 = values[0];
-            matrix.V01 = values[1];
-            matrix.V02 = values[2];
+        arr[2, 0] = m.V20;
+        arr[2, 1] = m.V21;
+        arr[2, 2] = m.V22;
 
-            matrix.V10 = values[3];
-            matrix.V11 = values[4];
-            matrix.V12 = values[5];
-
-            matrix.V20 = values[6];
-            matrix.V21 = values[7];
-            matrix.V22 = values[8];
-        }
-
-        return matrix;
+        return arr;
     }
 
-    // Function to get n distinct random numbers within a range
-    List<int> GetDistinctRandomNumbers(int n, int range) 
+    private List<float> GetDistances(List<Accord.Math.Vector3> s, int n)
     {
-        List<int> randomNumbers = new List<int>();
-        HashSet<int> numberSet = new HashSet<int>();
-        
-        // Check if n is greater than the range
-        if (n >= range) {
-            for (int i = 0; i < range; i++) {
-                randomNumbers.Add(i);
+        List<float> distances = new List<float>((n - 1) * (n - 2) / 2); 
+        for (int i = 0; i < n; ++i)
+            for (int j = i + 1; j < n; ++j)
+                distances.Add(Utility.DistanceTwoAccordVector(s[i], s[j]));
+        return distances;
+    }
+
+    private bool CheckCorrespondence(List<Accord.Math.Vector3> s1, List<Accord.Math.Vector3> s2, int n, float noise)
+    {
+        for (int i = 0; i < n; ++i) { 
+            for (int j = i + 1; j < n; ++j) {
+                float d1 = Utility.DistanceTwoAccordVector(s1[i], s1[j]);
+                float d2 = Utility.DistanceTwoAccordVector(s2[i], s2[j]);
+                if (Mathf.Abs(d1 - d2) > noise)
+                    return false;
             }
-            return randomNumbers;
         }
-        
-        while (randomNumbers.Count < n) {
-            int random = Random.Range(0, range);
-            if (!numberSet.Contains(random)) {
-                numberSet.Add(random);
-                randomNumbers.Add(random);
-            }
-        }
-        
-        return randomNumbers;
+        return true;
     }
 
     // Function to get n random points from a point cloud
-    List<Accord.Math.Vector3> GetRandomPointsFromPointCloud(List<Accord.Math.Vector3> pointCloud, int n) 
+    private List<Accord.Math.Vector3> GetRandomPointsFromPointCloud(List<Accord.Math.Vector3> pointCloud, int n) 
     {
-        List<int> randomIndices = GetDistinctRandomNumbers(n, pointCloud.Count);
+        List<int> randomIndices = Utility.GetDistinctRandomNumbers(n, pointCloud.Count);
         List<Accord.Math.Vector3> randomPoints = new List<Accord.Math.Vector3>();
-        foreach (int index in randomIndices) {
+        foreach (int index in randomIndices) 
             randomPoints.Add(pointCloud[index]);
-        }
         return randomPoints;
     }
 
-    void GetTransformation(List<Accord.Math.Vector3> points3_1, List<Accord.Math.Vector3> points3_2, out Accord.Math.Vector3 translation, out Accord.Math.Matrix3x3 rotation, out Accord.Math.Matrix3x3 scale)
+    private void GetTransformation(List<Accord.Math.Vector3> p3, List<Accord.Math.Vector3> q3, out Accord.Math.Vector3 translation, out Accord.Math.Matrix3x3 rotation)
     {
-        Accord.Math.Vector3 centroid_1 = GetCentroid(points3_1);
-        Accord.Math.Vector3 centroid_2 = GetCentroid(points3_2);
+        Accord.Math.Vector3 centroid1 = GetCentroid(p3);
+        Accord.Math.Vector3 centroid2 = GetCentroid(q3);
 
-        Accord.Math.Matrix3x3 matrix_1 = Normalize3PointMatrix(points3_1, centroid_1);
-        Accord.Math.Matrix3x3 matrix_2 = Normalize3PointMatrix(points3_2, centroid_2);
+        Accord.Math.Matrix3x3 matrix1 = Normalize3PointMatrix(p3, centroid1);
+        Accord.Math.Matrix3x3 matrix2 = Normalize3PointMatrix(q3, centroid2);
 
-        Accord.Math.Matrix3x3 H = matrix_1 * matrix_2.Transpose();
+        Accord.Math.Matrix3x3 H = matrix1 * matrix2.Transpose();
 
         H.SVD(out Accord.Math.Matrix3x3 U, out Accord.Math.Vector3 S, out Accord.Math.Matrix3x3 V);
 
-        Accord.Math.Matrix3x3 R = V * U.Transpose();
+        rotation = V * U.Transpose();
 
-        if (R.Determinant < 0) {
-            R.SVD(out Accord.Math.Matrix3x3 U_temp, out Accord.Math.Vector3 S_temp, out Accord.Math.Matrix3x3 V_temp);
+        if (rotation.Determinant < 0) {
+            rotation.SVD(out Accord.Math.Matrix3x3 U_temp, out Accord.Math.Vector3 S_temp, out Accord.Math.Matrix3x3 V_temp);
             V_temp.V20 = -V_temp.V00;
             V_temp.V21 = -V_temp.V01;
             V_temp.V22 = -V_temp.V02;
-            R = V_temp * U_temp.Transpose();
+            rotation = V_temp * U_temp.Transpose();
         }
 
-        translation = centroid_2 - R * centroid_1;
-        rotation = R;
-        scale = ConstructAccordMatrix3x3(1); // TODO implement scaling properly
+        translation = centroid2 - rotation * centroid1;
     }
 
-    Accord.Math.Matrix3x3 Normalize3PointMatrix(List<Accord.Math.Vector3> points, Accord.Math.Vector3 centroid)
+    private void GetDelta(Accord.Math.Vector3 p1, Accord.Math.Vector3 p2, out float deltaX, out float deltaY, out float deltaZ)
+    {
+        deltaX = p1.X - p2.X;
+        deltaY = p1.Y - p2.Y;
+        deltaZ = p1.Z - p2.Z;
+    }
+
+    private Accord.Math.Matrix3x3 GetScaleNumerically(List<Accord.Math.Vector3> s1, List<Accord.Math.Vector3> s2)
+    {
+        int n = 3; // point pairs
+        
+        double[][] inputs = new double[n][];
+        double[] outputs = new double[n];
+
+        int pair = 0;
+        for (int i = 0; i < n; ++i) {
+            for (int j = i + 1; j < n; ++j) {
+                float dx, dy, dz, dxPrime, dyPrime, dzPrime;
+                GetDelta(s2[i], s2[j], out dx, out dy, out dz); 
+                GetDelta(s1[i], s1[j], out dxPrime, out dyPrime, out dzPrime); 
+
+                outputs[pair] = System.Math.Pow(dx, 2) + System.Math.Pow(dy, 2) + System.Math.Pow(dz, 2); 
+                inputs[pair] = new double[3]; // Each inner array has 3 elements
+                inputs[pair][0] = dxPrime;
+                inputs[pair][1] = dyPrime;
+                inputs[pair][2] = dzPrime;
+                ++pair;
+            }
+        }
+
+        LeastSquaresFunction function = (double[] parameters, double[] input) =>
+        {
+            return System.Math.Pow(parameters[0] * input[0], 2) +
+                System.Math.Pow(parameters[1] * input[1], 2) +
+                System.Math.Pow(parameters[2] * input[2], 2); 
+        };
+
+        LeastSquaresGradientFunction gradient = (double[] parameters, double[] input, double[] result) =>
+        {
+            result[0] = 2 * input[0] * parameters[0];
+            result[1] = 2 * input[1] * parameters[1];
+            result[2] = 2 * input[2] * parameters[2];
+        };
+
+        // Create a new Levenberg-Marquardt algorithm
+        var gn = new LevenbergMarquardt(parameters: 3)
+        {
+            Function = function,
+            Gradient = gradient,
+            Solution = new[] {1.0, 1.0, 1.0} 
+        };
+
+        // Find the minimum value
+        gn.Minimize(inputs, outputs);
+
+        // Extract the scaling parameter
+        float sx = (float) gn.Solution[0];
+        float sy = (float) gn.Solution[1];
+        float sz = (float) gn.Solution[2];
+
+        Debug.Log($"Found Scaling Factors: sx = {sx:F2}, sy = {sy:F2}, sz = {sz:F2} (Numeric)");
+
+        return Utility.ConstructAccordMatrix3x3(
+            sx, 0f, 0f,
+            0f, sy, 0f,
+            0f, 0f, sz
+        );
+    }
+    
+    private Accord.Math.Matrix3x3 GetScaleAlgebraically(List<Accord.Math.Vector3> s1, List<Accord.Math.Vector3> s2)
+    {
+        // Ax = b
+        // x = A'b
+        Accord.Math.Vector3 b = new Accord.Math.Vector3();
+
+        b.X = Mathf.Pow(s1[0].X - s1[1].X, 2) + Mathf.Pow(s1[0].Y - s1[1].Y, 2) + Mathf.Pow(s1[0].Z - s1[1].Z, 2);
+        b.Y = Mathf.Pow(s1[0].X - s1[2].X, 2) + Mathf.Pow(s1[0].Y - s1[2].Y, 2) + Mathf.Pow(s1[0].Z - s1[2].Z, 2);
+        b.Z = Mathf.Pow(s1[1].X - s1[2].X, 2) + Mathf.Pow(s1[1].Y - s1[2].Y, 2) + Mathf.Pow(s1[1].Z - s1[2].Z, 2);
+
+        Accord.Math.Matrix3x3 A = new Accord.Math.Matrix3x3();
+
+        A.V00 = Mathf.Pow(s2[0].X - s2[1].X, 2);
+        A.V10 = Mathf.Pow(s2[0].X - s2[2].X, 2);
+        A.V20 = Mathf.Pow(s2[1].X - s2[2].X, 2);
+
+        A.V01 = Mathf.Pow(s2[0].Y - s2[1].Y, 2);
+        A.V11 = Mathf.Pow(s2[0].Y - s2[2].Y, 2);
+        A.V21 = Mathf.Pow(s2[1].Y - s2[2].Y, 2);
+
+        A.V02 = Mathf.Pow(s2[0].Z - s2[1].Z, 2);
+        A.V12 = Mathf.Pow(s2[0].Z - s2[2].Z, 2);
+        A.V22 = Mathf.Pow(s2[1].Z - s2[2].Z, 2);
+
+        Accord.Math.Matrix3x3 S = Utility.ConstructAccordMatrix3x3(1);
+        if (!Matrix.IsSingular(MatrixToArray(A))) {
+            // A is non-reversable
+            Accord.Math.Vector3 x = A.Inverse() * b;            
+            S.V00 = Mathf.Sqrt(x.X);        
+            S.V11 = Mathf.Sqrt(x.Y);        
+            S.V22 = Mathf.Sqrt(x.Z);        
+        }
+        
+        Debug.Log($"Found Scaling Factors: sx = {S.V00:F2}, sy = {S.V11:F2}, sz = {S.V22:F2} (Algebra)");
+
+        return S; 
+    }
+
+    private Accord.Math.Matrix3x3 Normalize3PointMatrix(List<Accord.Math.Vector3> points, Accord.Math.Vector3 centroid)
     {
         Accord.Math.Matrix3x3 matrix = new Accord.Math.Matrix3x3();
         matrix.V00 = points[0].X - centroid.X;
@@ -343,42 +414,34 @@ public class OptimalTransformation : MonoBehaviour
         return matrix;
     }
 
-    Accord.Math.Vector3 GetCentroid(List<Accord.Math.Vector3> points)
+    private Accord.Math.Vector3 GetCentroid(List<Accord.Math.Vector3> points)
     {
         Accord.Math.Vector3 centroid = new Accord.Math.Vector3(0f, 0f, 0f);
     
         foreach (Accord.Math.Vector3 point in points)
-        {
             centroid += point;
-        }
 
         centroid /= points.Count;
         return centroid;
     }
 
-    /* Count overlapping points in two point cloud */
-    int CountOverlappingPoints(List<Accord.Math.Vector3> points_1, List<Accord.Math.Vector3> points_2, float threshold)
+    private int CountOverlappingPoints(List<Accord.Math.Vector3> initials, List<Accord.Math.Vector3> targets, out double totalError)
     {
-        int numOverlaps = 0;
-        int[] overlappingPoints = new int[points_1.Count]; // instead use map
+        totalError = 0.0;
+        int count = 0;
 
-        for (int i = 0; i < points_1.Count; i++)
-        {
-            for (int j = 0; j < points_2.Count; j++)
-            {
-                if (DistanceTwoAccordVector(points_1[i], points_2[j]) < threshold && overlappingPoints[i] == 0)
-                {
-                    numOverlaps++;
-                    overlappingPoints[i] = 1;
-                    break;
-                }
+        for (int i = 0; i < initials.Count; ++i) {
+            double minError = Double.MaxValue; 
+            for (int j = 0; j < targets.Count; ++j) {
+                double error = Utility.SquaredDistanceTwoAccordVector(initials[i], targets[j]);
+                if (error <= minError) 
+                    minError = error;
             }
+            totalError += minError;
+            if (minError < alignmentThreshold)
+                ++count;
         }
 
-        return numOverlaps;
-    }
-
-    public float DistanceTwoAccordVector(Accord.Math.Vector3 point_1, Accord.Math.Vector3 point_2){
-        return (float)Mathf.Sqrt(Mathf.Pow(point_1.X - point_2.X, 2) + Mathf.Pow(point_1.Y - point_2.Y, 2) + Mathf.Pow(point_1.Z - point_2.Z, 2));
-    }
+        return count;
+    }   
 }
